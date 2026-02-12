@@ -1,7 +1,7 @@
 """
 NZDPU data explorer parser.
 
-Wide metric CSV -> long-form carbon records.
+Source-specific output (wide metrics -> long records).
 """
 
 from __future__ import annotations
@@ -20,33 +20,18 @@ OUTPUT_COLUMNS = [
     "source_name",
     "source_file",
     "source_row",
-    "source_page",
     "company_name",
-    "company_id",
     "company_url",
-    "country",
-    "jurisdiction",
-    "industry",
+    "reporting_year",
     "data_provider",
-    "report_year",
-    "data_year",
-    "target_year",
-    "record_type",
+    "jurisdiction",
+    "sics_sector",
+    "metric_key",
     "scope",
     "category",
-    "metric_name",
-    "metric_key",
     "value",
     "unit",
     "raw_value",
-    "top_tab",
-    "subtab",
-    "row_type",
-    "confidence",
-    "confidence_score",
-    "needs_review",
-    "quality_flags",
-    "raw_text",
 ]
 
 META_COLUMNS = {
@@ -58,10 +43,8 @@ META_COLUMNS = {
     "company_url",
 }
 
-CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
 VALUE_RE = re.compile(r"\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?")
 UNIT_RE = re.compile(r"(t\s*co[₂2]\s*(?:eq|e)?|tco2eq|tco2e|kgco2e|gco2e)", re.IGNORECASE)
-COMPANY_ID_RE = re.compile(r"/companies/(\d+)")
 CATEGORY_RE = re.compile(r"_ghgp_c(\d+)_")
 
 
@@ -89,20 +72,11 @@ def to_float(value) -> float | None:
         return None
 
 
-def to_int(value) -> int | None:
-    number = to_float(value)
-    if number is None:
-        return None
-    if number.is_integer():
-        return int(number)
-    return None
-
-
 def parse_value_unit(raw) -> tuple[float | None, str | None]:
     if raw is None or (isinstance(raw, float) and pd.isna(raw)):
         return None, None
     text = str(raw).strip()
-    if not text or text in {"-", "--", "—", "–"}:
+    if not text or text in {"-", "--", "—", "–", "nan"}:
         return None, None
 
     unit_match = UNIT_RE.search(text)
@@ -113,9 +87,30 @@ def parse_value_unit(raw) -> tuple[float | None, str | None]:
 
     numbers = [to_float(m.group()) for m in VALUE_RE.finditer(text)]
     numbers = [n for n in numbers if n is not None]
-    if not numbers:
-        return None, unit
-    return numbers[0], unit
+    value = numbers[0] if numbers else None
+    return value, unit
+
+
+def infer_scope(metric_key: str) -> str | None:
+    key = metric_key.lower()
+    if "s1" in key and "s2" in key and "s3" in key:
+        return "S1+2+3"
+    if "s1" in key and "s2" in key:
+        return "S1+2"
+    if "s1" in key:
+        return "S1"
+    if "s2" in key:
+        return "S2"
+    if "s3" in key:
+        return "S3"
+    return None
+
+
+def infer_category(metric_key: str) -> str | None:
+    match = CATEGORY_RE.search(metric_key.lower())
+    if match:
+        return f"GHGP_C{match.group(1)}"
+    return None
 
 
 def collect_input_files(args: argparse.Namespace, repo_root: Path) -> list[Path]:
@@ -142,139 +137,50 @@ def collect_input_files(args: argparse.Namespace, repo_root: Path) -> list[Path]
     return deduped
 
 
-def infer_scope(metric_key: str) -> str | None:
-    key = metric_key.lower()
-    if "s1" in key and "s2" in key and "s3" in key:
-        return "S1+2+3"
-    if "s1" in key and "s2" in key:
-        return "S1+2"
-    if "s1" in key:
-        return "S1"
-    if "s2" in key:
-        return "S2"
-    if "s3" in key:
-        return "S3"
-    return None
-
-
-def infer_category(metric_key: str) -> str | None:
-    match = CATEGORY_RE.search(metric_key.lower())
-    if match:
-        return f"GHGP_C{match.group(1)}"
-    return None
-
-
-def infer_record_type(metric_key: str) -> str:
-    key = metric_key.lower()
-    if "target" in key or "reduction" in key:
-        return "target"
-    return "emission"
-
-
-def infer_metric_name(metric_key: str) -> str:
-    text = metric_key.replace("_", " ").strip()
-    text = re.sub(r"\s+", " ", text)
-    return text
-
-
-def extract_company_id(company_url: str | None) -> str | None:
-    if not company_url:
-        return None
-    match = COMPANY_ID_RE.search(company_url)
-    return match.group(1) if match else None
-
-
 def parse_file(file: Path) -> list[dict]:
     df = pd.read_csv(file)
     records: list[dict] = []
 
     metric_cols = [c for c in df.columns if c not in META_COLUMNS]
-
     for idx, row in df.iterrows():
         row_no = idx + 2
-        company_url = row.get("company_url")
-        report_year = to_int(row.get("reporting_year"))
-
         base = {
             "source_name": SOURCE_NAME,
             "source_file": str(file),
             "source_row": row_no,
-            "source_page": None,
             "company_name": row.get("company_name"),
-            "company_id": extract_company_id(company_url),
-            "company_url": company_url,
-            "country": row.get("jurisdiction"),
-            "jurisdiction": row.get("jurisdiction"),
-            "industry": row.get("sics_sector"),
+            "company_url": row.get("company_url"),
+            "reporting_year": row.get("reporting_year"),
             "data_provider": row.get("data_provider"),
-            "report_year": report_year,
-            "data_year": report_year,
-            "target_year": None,
-            "top_tab": None,
-            "subtab": None,
-            "row_type": "item",
+            "jurisdiction": row.get("jurisdiction"),
+            "sics_sector": row.get("sics_sector"),
         }
 
         for metric_key in metric_cols:
-            raw = row.get(metric_key)
-            if raw is None or (isinstance(raw, float) and pd.isna(raw)):
+            raw_value = row.get(metric_key)
+            if raw_value is None or (isinstance(raw_value, float) and pd.isna(raw_value)):
                 continue
-            raw_text = str(raw).strip()
+            raw_text = str(raw_value).strip()
             if raw_text in {"", "-", "--", "—", "–", "nan"}:
                 continue
 
-            value, unit = parse_value_unit(raw)
-            record_type = infer_record_type(metric_key)
-            scope = infer_scope(metric_key)
-            category = infer_category(metric_key)
-            target_year = report_year if record_type == "target" else None
-
-            confidence = "high"
-            if value is None:
-                confidence = "low"
-            elif scope is None or unit is None:
-                confidence = "medium"
-
+            value, unit = parse_value_unit(raw_value)
             records.append(
                 {
                     **base,
-                    "record_type": record_type,
-                    "scope": scope,
-                    "category": category,
-                    "metric_name": infer_metric_name(metric_key),
                     "metric_key": metric_key,
+                    "scope": infer_scope(metric_key),
+                    "category": infer_category(metric_key),
                     "value": value,
                     "unit": unit,
-                    "raw_value": raw,
-                    "target_year": target_year,
-                    "confidence": confidence,
-                    "raw_text": f"metric={metric_key} raw={raw_text}",
+                    "raw_value": raw_value,
                 }
             )
 
     return records
 
 
-def build_quality_flags(row: pd.Series) -> str:
-    flags: list[str] = []
-    if row.get("record_type") == "emission":
-        if pd.isna(row.get("data_year")):
-            flags.append("missing_data_year")
-        if pd.isna(row.get("scope")):
-            flags.append("missing_scope")
-        if pd.isna(row.get("value")):
-            flags.append("missing_value")
-        if pd.isna(row.get("unit")):
-            flags.append("missing_unit")
-    else:
-        if pd.isna(row.get("target_year")):
-            flags.append("missing_target_year")
-        if pd.isna(row.get("value")):
-            flags.append("missing_target_value")
-    return ";".join(flags)
-
-
-def records_to_frame(records: list[dict], min_confidence: str) -> pd.DataFrame:
+def records_to_frame(records: list[dict]) -> pd.DataFrame:
     if not records:
         return pd.DataFrame(columns=OUTPUT_COLUMNS)
 
@@ -283,14 +189,9 @@ def records_to_frame(records: list[dict], min_confidence: str) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = None
 
-    df["confidence_score"] = df["confidence"].map(CONFIDENCE_RANK).fillna(0).astype(int)
-    df["quality_flags"] = df.apply(build_quality_flags, axis=1)
-    df["needs_review"] = df["quality_flags"].ne("")
-    df = df[df["confidence_score"] >= CONFIDENCE_RANK[min_confidence]]
-
     df = df.sort_values(["source_file", "source_row", "metric_key"], kind="stable")
     df = df.drop_duplicates(
-        subset=["company_id", "report_year", "metric_key", "value", "unit"],
+        subset=["company_name", "reporting_year", "metric_key", "value", "unit"],
         keep="first",
     )
     return df[OUTPUT_COLUMNS].reset_index(drop=True)
@@ -300,7 +201,6 @@ def parse_args(repo_root: Path) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="NZDPU data explorer carbon parser")
     parser.add_argument("--input-file", action="append", type=Path, default=[])
     parser.add_argument("--input-glob", default=DEFAULT_INPUT_GLOB)
-    parser.add_argument("--min-confidence", choices=["low", "medium", "high"], default="low")
 
     parser.add_argument("--run-date", help="Output partition date (YYYY-MM-DD)")
     parser.add_argument("--output-dir", type=Path)
@@ -351,7 +251,7 @@ def run(args: argparse.Namespace, repo_root: Path) -> Path:
         except Exception as exc:
             print(f"  error: {exc!r}")
 
-    df = records_to_frame(records, min_confidence=args.min_confidence)
+    df = records_to_frame(records)
     output = resolve_output_file(args, repo_root)
     save_output(df, output, args.output_format)
     print(f"saved: {output} rows={len(df)}")

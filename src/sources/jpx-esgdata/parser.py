@@ -7,46 +7,37 @@ Metadata/PDF inputs -> normalized carbon records.
 from __future__ import annotations
 
 import argparse
+import contextlib
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 import re
+import sys
 
 import pandas as pd
 
 SOURCE_NAME = Path(__file__).resolve().parent.name
 DEFAULT_METADATA_GLOB = "storage/raw/jpx-esgdata/*/metadata.csv"
+FONTBBOX_NOISE_TEXT = "Could not get FontBBox from font descriptor"
 
 OUTPUT_COLUMNS = [
     "source_name",
     "source_file",
-    "source_row",
+    "pdf_path",
     "source_page",
+    "source_type",
     "company_name",
     "company_id",
     "company_url",
-    "country",
-    "jurisdiction",
-    "industry",
-    "data_provider",
     "report_year",
+    "record_type",
+    "metric_name",
+    "scope",
     "data_year",
     "target_year",
-    "record_type",
-    "scope",
-    "category",
-    "metric_name",
-    "metric_key",
+    "reduction_pct",
     "value",
     "unit",
-    "raw_value",
-    "top_tab",
-    "subtab",
-    "row_type",
-    "confidence",
-    "confidence_score",
-    "needs_review",
-    "quality_flags",
     "raw_text",
 ]
 
@@ -103,7 +94,6 @@ SCOPE_PATTERNS = [
     (re.compile(r"総排出|合計|total", re.I), "TOTAL"),
 ]
 
-CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
 YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
 YEAR_JP_RE = re.compile(r"(?P<year>(19|20)\d{2})\s*年")
 NUMBER_RE = re.compile(r"\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?")
@@ -119,6 +109,36 @@ class PdfTask:
     company_url: str | None
     report_year: int | None
     source_file: str | None = None
+
+
+class _FilteredStderr:
+    def __init__(self, base_stream, drop_patterns: tuple[str, ...]) -> None:
+        self.base_stream = base_stream
+        self.drop_patterns = drop_patterns
+        self._buffer = ""
+
+    def write(self, data: str) -> int:
+        self._buffer += data
+        while "\n" in self._buffer:
+            line, self._buffer = self._buffer.split("\n", 1)
+            if any(pattern in line for pattern in self.drop_patterns):
+                continue
+            self.base_stream.write(line + "\n")
+        return len(data)
+
+    def flush(self) -> None:
+        if self._buffer:
+            if not any(pattern in self._buffer for pattern in self.drop_patterns):
+                self.base_stream.write(self._buffer)
+            self._buffer = ""
+        self.base_stream.flush()
+
+    def __getattr__(self, name: str):
+        return getattr(self.base_stream, name)
+
+
+def suppress_pdf_fontbbox_noise():
+    return contextlib.redirect_stderr(_FilteredStderr(sys.stderr, (FONTBBOX_NOISE_TEXT,)))
 
 
 def find_repo_root() -> Path:
@@ -192,22 +212,6 @@ def extract_numbers(text: str, *, drop_years: bool = True, drop_percent: bool = 
     return values
 
 
-def confidence_for_emission(data_year: int | None, scope: str | None, value: float | None, unit: str | None) -> str:
-    if value is not None and data_year is not None and scope is not None and unit is not None:
-        return "high"
-    if value is not None and (data_year is not None or scope is not None):
-        return "medium"
-    return "low"
-
-
-def confidence_for_target(target_year: int | None, pct: float | None, value: float | None) -> str:
-    if target_year is not None and (pct is not None or value is not None):
-        return "high"
-    if target_year is not None or pct is not None or value is not None:
-        return "medium"
-    return "low"
-
-
 def parse_emission_line(*, line: str, context: str, task: PdfTask, page_num: int, source_type: str) -> list[dict]:
     if not contains_any(line, EMISSION_KEYWORDS):
         return []
@@ -235,30 +239,21 @@ def parse_emission_line(*, line: str, context: str, task: PdfTask, page_num: int
                 {
                     "source_name": SOURCE_NAME,
                     "source_file": task.source_file or str(task.pdf_path),
-                    "source_row": None,
+                    "pdf_path": str(task.pdf_path),
                     "source_page": page_num,
+                    "source_type": source_type,
                     "company_name": task.company_name,
                     "company_id": task.company_id,
                     "company_url": task.company_url,
-                    "country": "JP",
-                    "jurisdiction": "Japan",
-                    "industry": None,
-                    "data_provider": "JPX ESGData",
                     "report_year": task.report_year,
+                    "record_type": "emission",
+                    "metric_name": metric_name,
+                    "scope": scope,
                     "data_year": year,
                     "target_year": None,
-                    "record_type": "emission",
-                    "scope": scope,
-                    "category": None,
-                    "metric_name": metric_name,
-                    "metric_key": metric_name,
+                    "reduction_pct": None,
                     "value": value,
                     "unit": unit,
-                    "raw_value": line,
-                    "top_tab": None,
-                    "subtab": None,
-                    "row_type": source_type,
-                    "confidence": confidence_for_emission(year, scope, value, unit),
                     "raw_text": line[:800],
                 }
             )
@@ -274,30 +269,21 @@ def parse_emission_line(*, line: str, context: str, task: PdfTask, page_num: int
         {
             "source_name": SOURCE_NAME,
             "source_file": task.source_file or str(task.pdf_path),
-            "source_row": None,
+            "pdf_path": str(task.pdf_path),
             "source_page": page_num,
+            "source_type": source_type,
             "company_name": task.company_name,
             "company_id": task.company_id,
             "company_url": task.company_url,
-            "country": "JP",
-            "jurisdiction": "Japan",
-            "industry": None,
-            "data_provider": "JPX ESGData",
             "report_year": task.report_year,
+            "record_type": "emission",
+            "metric_name": metric_name,
+            "scope": scope,
             "data_year": data_year,
             "target_year": None,
-            "record_type": "emission",
-            "scope": scope,
-            "category": None,
-            "metric_name": metric_name,
-            "metric_key": metric_name,
+            "reduction_pct": None,
             "value": value,
             "unit": unit,
-            "raw_value": line,
-            "top_tab": None,
-            "subtab": None,
-            "row_type": source_type,
-            "confidence": confidence_for_emission(data_year, scope, value, unit),
             "raw_text": line[:800],
         }
     )
@@ -335,34 +321,24 @@ def parse_target_text(*, text: str, task: PdfTask, page_num: int, source_type: s
             {
                 "source_name": SOURCE_NAME,
                 "source_file": task.source_file or str(task.pdf_path),
-                "source_row": None,
+                "pdf_path": str(task.pdf_path),
                 "source_page": page_num,
+                "source_type": source_type,
                 "company_name": task.company_name,
                 "company_id": task.company_id,
                 "company_url": task.company_url,
-                "country": "JP",
-                "jurisdiction": "Japan",
-                "industry": None,
-                "data_provider": "JPX ESGData",
                 "report_year": task.report_year,
+                "record_type": "target",
+                "metric_name": "온실가스 감축 목표",
+                "scope": scope,
                 "data_year": None,
                 "target_year": target_year,
-                "record_type": "target",
-                "scope": scope,
-                "category": None,
-                "metric_name": "온실가스 감축 목표",
-                "metric_key": "target",
+                "reduction_pct": reduction_pct,
                 "value": value,
                 "unit": unit,
-                "raw_value": text,
-                "top_tab": None,
-                "subtab": None,
-                "row_type": source_type,
-                "confidence": confidence_for_target(target_year, reduction_pct, value),
                 "raw_text": text[:800],
             }
         )
-        out[-1]["category"] = f"reduction_pct={reduction_pct}" if reduction_pct is not None else None
     return out
 
 
@@ -396,39 +372,62 @@ def parse_pdf(task: PdfTask, max_pages: int | None) -> list[dict]:
         raise RuntimeError("pdfplumber is required. Install with: pip install pdfplumber") from exc
 
     records: list[dict] = []
-    with pdfplumber.open(task.pdf_path) as pdf:
-        limit = min(len(pdf.pages), max_pages) if max_pages else len(pdf.pages)
-        for page_idx in range(limit):
-            page = pdf.pages[page_idx]
-            page_num = page_idx + 1
-            text = page.extract_text() or ""
-            if not contains_any(text, CARBON_PAGE_KEYWORDS):
-                continue
+    with suppress_pdf_fontbbox_noise():
+        with pdfplumber.open(task.pdf_path) as pdf:
+            limit = min(len(pdf.pages), max_pages) if max_pages else len(pdf.pages)
+            for page_idx in range(limit):
+                page = pdf.pages[page_idx]
+                page_num = page_idx + 1
+                text = page.extract_text() or ""
+                if not contains_any(text, CARBON_PAGE_KEYWORDS):
+                    continue
 
-            lines = [norm_ws(line) for line in text.splitlines() if norm_ws(line)]
-            for i, line in enumerate(lines):
-                ctx = " ".join(lines[max(0, i - 2) : min(len(lines), i + 3)])
-                records.extend(parse_emission_line(line=line, context=ctx, task=task, page_num=page_num, source_type="text"))
-
-                target_window = " ".join(lines[i : min(len(lines), i + 2)])
-                records.extend(parse_target_text(text=target_window, task=task, page_num=page_num, source_type="text"))
-
-            tables = extract_tables_from_page(page)
-            for table in tables:
-                for row in table:
-                    row_text = norm_ws(" ".join(c for c in row if c))
-                    if not row_text:
-                        continue
+                lines = [norm_ws(line) for line in text.splitlines() if norm_ws(line)]
+                for i, line in enumerate(lines):
+                    ctx = " ".join(lines[max(0, i - 2) : min(len(lines), i + 3)])
                     records.extend(
                         parse_emission_line(
-                            line=row_text,
-                            context=row_text,
+                            line=line,
+                            context=ctx,
                             task=task,
                             page_num=page_num,
-                            source_type="table",
+                            source_type="text",
                         )
                     )
-                    records.extend(parse_target_text(text=row_text, task=task, page_num=page_num, source_type="table"))
+
+                    target_window = " ".join(lines[i : min(len(lines), i + 2)])
+                    records.extend(
+                        parse_target_text(
+                            text=target_window,
+                            task=task,
+                            page_num=page_num,
+                            source_type="text",
+                        )
+                    )
+
+                tables = extract_tables_from_page(page)
+                for table in tables:
+                    for row in table:
+                        row_text = norm_ws(" ".join(c for c in row if c))
+                        if not row_text:
+                            continue
+                        records.extend(
+                            parse_emission_line(
+                                line=row_text,
+                                context=row_text,
+                                task=task,
+                                page_num=page_num,
+                                source_type="table",
+                            )
+                        )
+                        records.extend(
+                            parse_target_text(
+                                text=row_text,
+                                task=task,
+                                page_num=page_num,
+                                source_type="table",
+                            )
+                        )
 
     return records
 
@@ -521,24 +520,7 @@ def collect_tasks(args: argparse.Namespace, repo_root: Path) -> list[PdfTask]:
     return deduped
 
 
-def build_quality_flags(row: pd.Series) -> str:
-    flags: list[str] = []
-    if row.get("record_type") == "emission":
-        if pd.isna(row.get("data_year")):
-            flags.append("missing_data_year")
-        if pd.isna(row.get("scope")):
-            flags.append("missing_scope")
-        if pd.isna(row.get("unit")):
-            flags.append("missing_unit")
-    else:
-        if pd.isna(row.get("target_year")):
-            flags.append("missing_target_year")
-        if pd.isna(row.get("value")) and (not isinstance(row.get("category"), str) or "reduction_pct=" not in str(row.get("category"))):
-            flags.append("missing_target_value")
-    return ";".join(flags)
-
-
-def records_to_frame(records: list[dict], min_confidence: str) -> pd.DataFrame:
+def records_to_frame(records: list[dict]) -> pd.DataFrame:
     if not records:
         return pd.DataFrame(columns=OUTPUT_COLUMNS)
 
@@ -549,20 +531,22 @@ def records_to_frame(records: list[dict], min_confidence: str) -> pd.DataFrame:
 
     df = df[~((df["record_type"] == "emission") & (df["value"].isna()))]
 
-    df["confidence_score"] = df["confidence"].map(CONFIDENCE_RANK).fillna(0).astype(int)
-    df["quality_flags"] = df.apply(build_quality_flags, axis=1)
-    df["needs_review"] = df["quality_flags"].ne("")
-    df = df[df["confidence_score"] >= CONFIDENCE_RANK[min_confidence]]
-
-    # Split reduction pct in category into separate numeric where possible
-    pct = df["category"].astype("string").str.extract(r"reduction_pct=(\d+(?:\.\d+)?)", expand=False)
-    pct = pd.to_numeric(pct, errors="coerce")
-    df.loc[(df["record_type"] == "target") & df["value"].isna() & pct.notna(), "value"] = pct
-    df.loc[(df["record_type"] == "target") & df["metric_name"].eq("온실가스 감축 목표") & df["unit"].isna() & pct.notna(), "unit"] = "%"
-
-    df = df.sort_values(["source_file", "source_page", "record_type", "scope", "data_year", "target_year"], kind="stable")
+    df = df.sort_values(["source_file", "pdf_path", "source_page", "record_type", "scope", "data_year", "target_year"], kind="stable")
     df = df.drop_duplicates(
-        subset=["source_file", "source_page", "record_type", "scope", "metric_name", "data_year", "target_year", "value", "unit"],
+        subset=[
+            "source_file",
+            "pdf_path",
+            "source_page",
+            "source_type",
+            "record_type",
+            "scope",
+            "metric_name",
+            "data_year",
+            "target_year",
+            "reduction_pct",
+            "value",
+            "unit",
+        ],
         keep="first",
     )
     return df[OUTPUT_COLUMNS].reset_index(drop=True)
@@ -576,7 +560,7 @@ def parse_args(repo_root: Path) -> argparse.Namespace:
     parser.add_argument("--pdf-dir", action="append", type=Path, default=[])
     parser.add_argument("--recursive", action="store_true")
     parser.add_argument("--max-pages", type=int)
-    parser.add_argument("--min-confidence", choices=["low", "medium", "high"], default="low")
+    parser.add_argument("--min-confidence", choices=["low", "medium", "high"], default="low", help=argparse.SUPPRESS)
 
     parser.add_argument("--run-date", help="Output partition date (YYYY-MM-DD)")
     parser.add_argument("--output-dir", type=Path)
@@ -629,7 +613,7 @@ def run(args: argparse.Namespace, repo_root: Path) -> Path:
         except Exception as exc:
             print(f"  error: {exc!r}")
 
-    df = records_to_frame(records, min_confidence=args.min_confidence)
+    df = records_to_frame(records)
     output = resolve_output_file(args, repo_root)
     save_output(df, output, args.output_format)
     print(f"saved: {output} rows={len(df)}")

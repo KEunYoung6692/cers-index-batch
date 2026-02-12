@@ -131,14 +131,8 @@ OUTPUT_COLUMNS = [
     "reduction_pct",
     "unit",
     "source_type",
-    "confidence",
-    "confidence_score",
-    "needs_review",
-    "quality_flags",
     "raw_text",
 ]
-
-CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
 
 
 @dataclass
@@ -897,6 +891,20 @@ def collect_tasks(args: argparse.Namespace, repo_root: Path) -> list[PdfTask]:
                 tasks_by_path[key] = PdfTask(pdf_path=path)
 
     tasks = [task for task in tasks_by_path.values() if task.pdf_path.exists()]
+    if not tasks:
+        sample_dirs = [
+            Path(__file__).resolve().parent / "output_example",
+            Path(__file__).resolve().parent / "output-example",
+        ]
+        for sample_dir in sample_dirs:
+            if not sample_dir.exists():
+                continue
+            for path in sorted(sample_dir.glob("*.pdf")):
+                key = str(path.resolve())
+                if key not in tasks_by_path:
+                    tasks_by_path[key] = PdfTask(pdf_path=path)
+        tasks = [task for task in tasks_by_path.values() if task.pdf_path.exists()]
+
     tasks.sort(key=lambda t: str(t.pdf_path))
     return tasks
 
@@ -946,7 +954,7 @@ def parse_args(repo_root: Path) -> argparse.Namespace:
         "--min-confidence",
         choices=["low", "medium", "high"],
         default="low",
-        help="Filter output by confidence level. Default keeps all extracted rows.",
+        help=argparse.SUPPRESS,
     )
     args = parser.parse_args()
 
@@ -978,26 +986,7 @@ def resolve_output_file(args: argparse.Namespace, repo_root: Path) -> Path:
     return output_file
 
 
-def build_quality_flags(row: pd.Series) -> str:
-    flags: list[str] = []
-    if row.get("record_type") == "emission":
-        if pd.isna(row.get("data_year")):
-            flags.append("missing_data_year")
-        if pd.isna(row.get("scope")):
-            flags.append("missing_scope")
-        if pd.isna(row.get("unit")):
-            flags.append("missing_unit")
-    elif row.get("record_type") == "target":
-        if pd.isna(row.get("target_year")):
-            flags.append("missing_target_year")
-        if pd.isna(row.get("baseline_year")):
-            flags.append("missing_baseline_year")
-        if pd.isna(row.get("reduction_pct")) and pd.isna(row.get("value")):
-            flags.append("missing_target_value")
-    return ";".join(flags)
-
-
-def records_to_frame(records: list[CarbonRecord], min_confidence: str) -> pd.DataFrame:
+def records_to_frame(records: list[CarbonRecord]) -> pd.DataFrame:
     if not records:
         return pd.DataFrame(columns=OUTPUT_COLUMNS)
     df = pd.DataFrame([asdict(record) for record in records])
@@ -1019,12 +1008,6 @@ def records_to_frame(records: list[CarbonRecord], min_confidence: str) -> pd.Dat
 
     df["unit"] = df["unit"].astype("string").str.strip().replace({"<NA>": None, "": None})
     df["scope"] = df["scope"].astype("string").str.strip().replace({"<NA>": None, "": None})
-    df["confidence_score"] = df["confidence"].map(CONFIDENCE_RANK).fillna(0).astype(int)
-    df["quality_flags"] = df.apply(build_quality_flags, axis=1)
-    df["needs_review"] = df["quality_flags"].ne("")
-
-    min_rank = CONFIDENCE_RANK[min_confidence]
-    df = df[df["confidence_score"] >= min_rank]
 
     df = df.sort_values(
         by=["pdf_path", "page_number", "record_type", "scope", "data_year", "target_year", "source_type"],
@@ -1076,7 +1059,7 @@ def run(args: argparse.Namespace, repo_root: Path) -> Path:
         except Exception as exc:
             print(f"  error: {exc!r}")
 
-    df = records_to_frame(all_records, min_confidence=args.min_confidence)
+    df = records_to_frame(all_records)
     save_output(df, output_file, args.output_format)
 
     if not df.empty:

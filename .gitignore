@@ -211,3 +211,4 @@ __marimo__/
 .ipynb_checkpoints
 *.ipynb
 *.pdf
+*.csv

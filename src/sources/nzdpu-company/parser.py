@@ -1,7 +1,7 @@
 """
 NZDPU company parser.
 
-Company-level table rows -> normalized carbon records.
+Source-specific output for emissions/targets table rows.
 """
 
 from __future__ import annotations
@@ -20,33 +20,27 @@ OUTPUT_COLUMNS = [
     "source_name",
     "source_file",
     "source_row",
-    "source_page",
-    "company_name",
     "company_id",
+    "company_name",
     "company_url",
-    "country",
-    "jurisdiction",
-    "industry",
-    "data_provider",
-    "report_year",
-    "data_year",
-    "target_year",
+    "top_tab",
+    "subtab",
+    "page_url",
+    "row_type",
+    "group",
+    "field_name",
+    "data_key",
+    "source",
+    "last_updated",
+    "restatement",
     "record_type",
     "scope",
     "category",
-    "metric_name",
-    "metric_key",
+    "data_year",
+    "target_year",
     "value",
     "unit",
     "raw_value",
-    "top_tab",
-    "subtab",
-    "row_type",
-    "confidence",
-    "confidence_score",
-    "needs_review",
-    "quality_flags",
-    "raw_text",
 ]
 
 CARBON_HINTS = (
@@ -75,11 +69,10 @@ SCOPE_PATTERNS = [
     (re.compile(r"total\s*emissions|총\s*배출량|합계", re.I), "TOTAL"),
 ]
 
-CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
 VALUE_RE = re.compile(r"\d{1,3}(?:,\d{3})*(?:\.\d+)?|\d+(?:\.\d+)?")
 UNIT_RE = re.compile(r"(t\s*co[₂2]\s*(?:eq|e)?|tco2eq|tco2e|kgco2e|gco2e|mwh|kwh|gwh|tj|%)", re.I)
 YEAR_RE = re.compile(r"\b(19|20)\d{2}\b")
-CAT_RE = re.compile(r"_ghgp_c(\d+)_", re.I)
+CATEGORY_RE = re.compile(r"_ghgp_c(\d+)_", re.I)
 
 
 def find_repo_root() -> Path:
@@ -113,8 +106,9 @@ def parse_value_unit(raw) -> tuple[float | None, str | None]:
     if not text or text in {"-", "--", "—", "–", "nan"}:
         return None, None
 
-    numbers = [to_float(m.group()) for m in VALUE_RE.finditer(text)]
-    numbers = [n for n in numbers if n is not None]
+    values = [to_float(m.group()) for m in VALUE_RE.finditer(text)]
+    values = [v for v in values if v is not None]
+    value = values[0] if values else None
 
     unit_match = UNIT_RE.search(text)
     unit = unit_match.group(1) if unit_match else None
@@ -122,7 +116,6 @@ def parse_value_unit(raw) -> tuple[float | None, str | None]:
         unit = unit.replace(" ", "").replace("co₂", "co2")
         unit = unit.replace("tco2eq", "tCO2e").replace("tco2e", "tCO2e")
 
-    value = numbers[0] if numbers else None
     return value, unit
 
 
@@ -150,10 +143,40 @@ def extract_target_year(text: str | None, base_year: int | None) -> int | None:
         return None
     if base_year is None:
         return max(years)
-    candidates = [y for y in years if y >= base_year]
-    if candidates:
-        return max(candidates)
-    return max(years)
+    later = [y for y in years if y >= base_year]
+    return max(later) if later else max(years)
+
+
+def infer_category(data_key: str | None) -> str | None:
+    if data_key is None:
+        return None
+    text = str(data_key)
+    if text in {"", "nan", "None"}:
+        return None
+    match = CATEGORY_RE.search(text)
+    if match:
+        return f"GHGP_C{match.group(1)}"
+    return None
+
+
+def row_is_carbon_related(row: pd.Series) -> bool:
+    text = " ".join(
+        str(row.get(k) or "")
+        for k in ["group", "field_name", "data_key", "top_tab", "subtab", "value"]
+    ).lower()
+    return any(hint in text for hint in CARBON_HINTS)
+
+
+def infer_record_type(row: pd.Series, context: str) -> str:
+    top_tab = str(row.get("top_tab") or "").upper()
+    subtab = str(row.get("subtab") or "").upper()
+    if "TARGET" in top_tab or "TARGET" in subtab:
+        return "target"
+    if "PROGRESS" in subtab or "VALIDATION" in subtab:
+        return "target"
+    if "target" in context.lower() or "reduction" in context.lower():
+        return "target"
+    return "emission"
 
 
 def collect_input_files(args: argparse.Namespace, repo_root: Path) -> list[Path]:
@@ -180,45 +203,14 @@ def collect_input_files(args: argparse.Namespace, repo_root: Path) -> list[Path]
     return deduped
 
 
-def row_is_carbon_related(row: pd.Series) -> bool:
-    text = " ".join(
-        str(row.get(k) or "")
-        for k in ["group", "field_name", "data_key", "top_tab", "subtab", "value"]
-    ).lower()
-    return any(hint in text for hint in CARBON_HINTS)
-
-
-def infer_record_type(row: pd.Series, context: str) -> str:
-    top_tab = str(row.get("top_tab") or "").upper()
-    subtab = str(row.get("subtab") or "").upper()
-    if "TARGET" in top_tab or "TARGET" in subtab:
-        return "target"
-    if "PROGRESS" in subtab or "VALIDATION" in subtab:
-        return "target"
-    if "target" in context.lower() or "reduction" in context.lower():
-        return "target"
-    return "emission"
-
-
-def infer_category(data_key: str | None) -> str | None:
-    if not data_key:
-        return None
-    text = str(data_key)
-    if text in {"", "nan", "None"}:
-        return None
-    match = CAT_RE.search(text)
-    if match:
-        return f"GHGP_C{match.group(1)}"
-    return None
-
-
 def parse_file(file: Path) -> list[dict]:
     df = pd.read_csv(file)
     records: list[dict] = []
 
     for idx, row in df.iterrows():
         row_no = idx + 2
-        if str(row.get("row_type") or "").lower() not in {"item", "group"}:
+        row_type = str(row.get("row_type") or "").lower()
+        if row_type not in {"item", "group"}:
             continue
         if not row_is_carbon_related(row):
             continue
@@ -234,78 +226,47 @@ def parse_file(file: Path) -> list[dict]:
             or extract_year(str(row.get("last_updated") or ""))
             or extract_year(str(row.get("page_url") or ""))
         )
-        report_year = data_year
-        target_year = extract_target_year(context, report_year) if record_type == "target" else None
+        target_year = extract_target_year(context, data_year) if record_type == "target" else None
 
         value, unit = parse_value_unit(row.get("value"))
-        scope = infer_scope(context)
-        category = infer_category(row.get("data_key"))
 
-        confidence = "high"
-        if value is None and record_type == "emission":
-            confidence = "low"
-        elif value is None and record_type == "target" and target_year is None:
-            confidence = "low"
-        elif (record_type == "emission" and (data_year is None or scope is None)) or (
-            record_type == "target" and target_year is None
-        ):
-            confidence = "medium"
+        # For group rows without numeric value, keep only if target year exists.
+        if value is None and not (record_type == "target" and target_year is not None):
+            continue
 
         records.append(
             {
                 "source_name": SOURCE_NAME,
                 "source_file": str(file),
                 "source_row": row_no,
-                "source_page": None,
-                "company_name": row.get("company_name"),
                 "company_id": row.get("company_id"),
+                "company_name": row.get("company_name"),
                 "company_url": row.get("company_url"),
-                "country": "Unknown",
-                "jurisdiction": None,
-                "industry": None,
-                "data_provider": None,
-                "report_year": report_year,
+                "top_tab": row.get("top_tab"),
+                "subtab": row.get("subtab"),
+                "page_url": row.get("page_url"),
+                "row_type": row.get("row_type"),
+                "group": row.get("group"),
+                "field_name": row.get("field_name"),
+                "data_key": row.get("data_key"),
+                "source": row.get("source"),
+                "last_updated": row.get("last_updated"),
+                "restatement": row.get("restatement"),
+                "record_type": record_type,
+                "scope": infer_scope(context),
+                "category": infer_category(row.get("data_key")),
                 "data_year": data_year if record_type == "emission" else None,
                 "target_year": target_year,
-                "record_type": record_type,
-                "scope": scope,
-                "category": category,
-                "metric_name": row.get("field_name") or row.get("group") or row.get("data_key"),
-                "metric_key": row.get("data_key") or row.get("field_name"),
                 "value": value,
                 "unit": unit,
                 "raw_value": row.get("value"),
-                "top_tab": row.get("top_tab"),
-                "subtab": row.get("subtab"),
-                "row_type": row.get("row_type"),
-                "confidence": confidence,
-                "raw_text": context[:800],
             }
         )
 
     return records
 
 
-def build_quality_flags(row: pd.Series) -> str:
-    flags: list[str] = []
-    if row.get("record_type") == "emission":
-        if pd.isna(row.get("data_year")):
-            flags.append("missing_data_year")
-        if pd.isna(row.get("scope")):
-            flags.append("missing_scope")
-        if pd.isna(row.get("value")):
-            flags.append("missing_value")
-        if pd.isna(row.get("unit")):
-            flags.append("missing_unit")
-    else:
-        if pd.isna(row.get("target_year")):
-            flags.append("missing_target_year")
-        if pd.isna(row.get("value")):
-            flags.append("missing_target_value")
-    return ";".join(flags)
-
-
-def records_to_frame(records: list[dict], min_confidence: str) -> pd.DataFrame:
+def records_to_frame(records: list[dict]) -> pd.DataFrame:
     if not records:
         return pd.DataFrame(columns=OUTPUT_COLUMNS)
 
@@ -314,17 +275,18 @@ def records_to_frame(records: list[dict], min_confidence: str) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = None
 
-    # keep target rows even without numeric value if they have target_year
-    df = df[~((df["record_type"] == "emission") & (df["value"].isna()))]
-
-    df["confidence_score"] = df["confidence"].map(CONFIDENCE_RANK).fillna(0).astype(int)
-    df["quality_flags"] = df.apply(build_quality_flags, axis=1)
-    df["needs_review"] = df["quality_flags"].ne("")
-    df = df[df["confidence_score"] >= CONFIDENCE_RANK[min_confidence]]
-
-    df = df.sort_values(["source_file", "source_row", "metric_key"], kind="stable")
+    df = df.sort_values(["source_file", "source_row", "top_tab", "subtab", "data_key"], kind="stable")
     df = df.drop_duplicates(
-        subset=["company_id", "top_tab", "subtab", "metric_key", "data_year", "target_year", "value", "unit"],
+        subset=[
+            "company_id",
+            "top_tab",
+            "subtab",
+            "data_key",
+            "data_year",
+            "target_year",
+            "value",
+            "unit",
+        ],
         keep="first",
     )
     return df[OUTPUT_COLUMNS].reset_index(drop=True)
@@ -334,7 +296,6 @@ def parse_args(repo_root: Path) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="NZDPU company carbon parser")
     parser.add_argument("--input-file", action="append", type=Path, default=[])
     parser.add_argument("--input-glob", default=DEFAULT_INPUT_GLOB)
-    parser.add_argument("--min-confidence", choices=["low", "medium", "high"], default="low")
 
     parser.add_argument("--run-date", help="Output partition date (YYYY-MM-DD)")
     parser.add_argument("--output-dir", type=Path)
@@ -385,7 +346,7 @@ def run(args: argparse.Namespace, repo_root: Path) -> Path:
         except Exception as exc:
             print(f"  error: {exc!r}")
 
-    df = records_to_frame(records, min_confidence=args.min_confidence)
+    df = records_to_frame(records)
     output = resolve_output_file(args, repo_root)
     save_output(df, output, args.output_format)
     print(f"saved: {output} rows={len(df)}")

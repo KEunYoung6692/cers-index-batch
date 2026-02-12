@@ -1,7 +1,7 @@
 """
 GIR-KOR carbon parser.
 
-Raw CSV -> normalized carbon records.
+Source-specific output (no global union schema).
 """
 
 from __future__ import annotations
@@ -9,7 +9,6 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 from pathlib import Path
-import re
 
 import pandas as pd
 
@@ -20,36 +19,19 @@ OUTPUT_COLUMNS = [
     "source_name",
     "source_file",
     "source_row",
-    "source_page",
     "company_name",
-    "company_id",
-    "company_url",
-    "country",
-    "jurisdiction",
+    "stock_code",
+    "agency",
+    "year",
+    "designation_type",
     "industry",
-    "data_provider",
-    "report_year",
-    "data_year",
-    "target_year",
-    "record_type",
-    "scope",
-    "category",
-    "metric_name",
+    "verifier",
+    "remark",
     "metric_key",
+    "metric_name",
     "value",
     "unit",
-    "raw_value",
-    "top_tab",
-    "subtab",
-    "row_type",
-    "confidence",
-    "confidence_score",
-    "needs_review",
-    "quality_flags",
-    "raw_text",
 ]
-
-CONFIDENCE_RANK = {"low": 0, "medium": 1, "high": 2}
 
 
 def find_repo_root() -> Path:
@@ -95,7 +77,6 @@ def collect_input_files(args: argparse.Namespace, repo_root: Path) -> list[Path]
     if args.input_glob:
         files.extend(sorted(Path(repo_root).glob(args.input_glob)))
 
-    # local examples fallback
     if not files:
         files.extend(sorted((Path(__file__).resolve().parent / "output-example").glob("*.csv")))
 
@@ -110,90 +91,54 @@ def collect_input_files(args: argparse.Namespace, repo_root: Path) -> list[Path]
     return deduped
 
 
-def make_record_base(*, file: Path, row_no: int, row: pd.Series) -> dict:
-    year = to_int(row.get("year"))
-    return {
-        "source_name": SOURCE_NAME,
-        "source_file": str(file),
-        "source_row": row_no,
-        "source_page": None,
-        "company_name": row.get("corp_name"),
-        "company_id": row.get("stock_code"),
-        "company_url": None,
-        "country": "KR",
-        "jurisdiction": "Korea",
-        "industry": row.get("industry"),
-        "data_provider": "GIR-KOR",
-        "report_year": year,
-        "data_year": year,
-        "target_year": None,
-        "top_tab": None,
-        "subtab": None,
-        "row_type": "item",
-        "raw_text": f"agency={row.get('agency')} verifier={row.get('verifier')} remark={row.get('remark')}",
-    }
-
-
 def parse_file(file: Path) -> list[dict]:
     df = pd.read_csv(file)
     records: list[dict] = []
 
     for idx, row in df.iterrows():
         row_no = idx + 2
-        base = make_record_base(file=file, row_no=row_no, row=row)
+        base = {
+            "source_name": SOURCE_NAME,
+            "source_file": str(file),
+            "source_row": row_no,
+            "company_name": row.get("corp_name"),
+            "stock_code": row.get("stock_code"),
+            "agency": row.get("agency"),
+            "year": to_int(row.get("year")),
+            "designation_type": row.get("designation_type"),
+            "industry": row.get("industry"),
+            "verifier": row.get("verifier"),
+            "remark": row.get("remark"),
+        }
 
         ghg = to_float(row.get("ghg_tco2eq"))
         if ghg is not None:
             records.append(
                 {
                     **base,
-                    "record_type": "emission",
-                    "scope": "TOTAL",
-                    "category": "facility",
-                    "metric_name": "온실가스 배출량",
                     "metric_key": "ghg_tco2eq",
+                    "metric_name": "온실가스 배출량",
                     "value": ghg,
                     "unit": "tCO2e",
-                    "raw_value": row.get("ghg_tco2eq"),
-                    "confidence": "high" if base["data_year"] is not None else "medium",
                 }
             )
 
-        # energy is relevant context for emissions
         energy = to_float(row.get("energy_tj"))
         if energy is not None:
             records.append(
                 {
                     **base,
-                    "record_type": "emission",
-                    "scope": None,
-                    "category": "energy",
-                    "metric_name": "에너지 사용량",
                     "metric_key": "energy_tj",
+                    "metric_name": "에너지 사용량",
                     "value": energy,
                     "unit": "TJ",
-                    "raw_value": row.get("energy_tj"),
-                    "confidence": "medium",
                 }
             )
 
     return records
 
 
-def build_quality_flags(row: pd.Series) -> str:
-    flags: list[str] = []
-    if pd.isna(row.get("data_year")):
-        flags.append("missing_data_year")
-    if pd.isna(row.get("value")):
-        flags.append("missing_value")
-    if pd.isna(row.get("unit")):
-        flags.append("missing_unit")
-    if pd.isna(row.get("scope")):
-        flags.append("missing_scope")
-    return ";".join(flags)
-
-
-def records_to_frame(records: list[dict], min_confidence: str) -> pd.DataFrame:
+def records_to_frame(records: list[dict]) -> pd.DataFrame:
     if not records:
         return pd.DataFrame(columns=OUTPUT_COLUMNS)
 
@@ -202,14 +147,9 @@ def records_to_frame(records: list[dict], min_confidence: str) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = None
 
-    df["confidence_score"] = df["confidence"].map(CONFIDENCE_RANK).fillna(0).astype(int)
-    df["quality_flags"] = df.apply(build_quality_flags, axis=1)
-    df["needs_review"] = df["quality_flags"].ne("")
-    df = df[df["confidence_score"] >= CONFIDENCE_RANK[min_confidence]]
-
     df = df.sort_values(["source_file", "source_row", "metric_key"], kind="stable")
     df = df.drop_duplicates(
-        subset=["source_file", "source_row", "metric_key", "value", "unit", "scope"],
+        subset=["source_file", "source_row", "metric_key", "value", "unit"],
         keep="first",
     )
     return df[OUTPUT_COLUMNS].reset_index(drop=True)
@@ -219,7 +159,6 @@ def parse_args(repo_root: Path) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="GIR-KOR carbon parser")
     parser.add_argument("--input-file", action="append", type=Path, default=[])
     parser.add_argument("--input-glob", default=DEFAULT_INPUT_GLOB)
-    parser.add_argument("--min-confidence", choices=["low", "medium", "high"], default="low")
 
     parser.add_argument("--run-date", help="Output partition date (YYYY-MM-DD)")
     parser.add_argument("--output-dir", type=Path)
@@ -270,7 +209,7 @@ def run(args: argparse.Namespace, repo_root: Path) -> Path:
         except Exception as exc:
             print(f"  error: {exc!r}")
 
-    df = records_to_frame(records, min_confidence=args.min_confidence)
+    df = records_to_frame(records)
     output = resolve_output_file(args, repo_root)
     save_output(df, output, args.output_format)
     print(f"saved: {output} rows={len(df)}")
