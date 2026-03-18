@@ -1,0 +1,18 @@
+{
+  "tables": [
+    {
+      "table_name": "climate_targets",
+      "row_count": 2,
+      "ready_count": 0,
+      "needs_resolution_count": 2,
+      "invalid_count": 0,
+      "rows_path": "/home/on_dev/onjourney/cers-index-batch/CI_BATCH/storage/load/2026-03-18/climate_targets/rows.jsonl"
+    }
+  ],
+  "structured_record_count": 2,
+  "materialized_record_count": 2,
+  "ready_count": 0,
+  "needs_resolution_count": 2,
+  "invalid_count": 0,
+  "table_count": 1
+}

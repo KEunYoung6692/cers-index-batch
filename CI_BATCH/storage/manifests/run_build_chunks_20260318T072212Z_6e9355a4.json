@@ -1,0 +1,14 @@
+{
+  "batch_name": "build_chunks",
+  "run_id": "run_build_chunks_20260318T072212Z_6e9355a4",
+  "run_date": "2026-03-18",
+  "started_at": "2026-03-18T07:22:12Z",
+  "ci_batch_root": "/home/on_dev/onjourney/cers-index-batch/CI_BATCH",
+  "extra": {
+    "documents_manifest_path": "/home/on_dev/onjourney/cers-index-batch/CI_BATCH/storage/manifests/2026-03-18/run_extract_pages_20260318T071916Z_ec6333c3_documents_extracted.jsonl",
+    "chunk_manifest_path": "/home/on_dev/onjourney/cers-index-batch/CI_BATCH/storage/manifests/2026-03-18/run_build_chunks_20260318T072212Z_6e9355a4_retrieval_chunks.jsonl",
+    "requested_documents": 1,
+    "processed_documents": 1,
+    "chunk_count": 75
+  }
+}

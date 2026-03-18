@@ -1,0 +1,17 @@
+{
+  "batch_name": "extract_pages",
+  "run_id": "run_extract_pages_20260318T071916Z_ec6333c3",
+  "run_date": "2026-03-18",
+  "started_at": "2026-03-18T07:19:16Z",
+  "ci_batch_root": "/home/on_dev/onjourney/cers-index-batch/CI_BATCH",
+  "extra": {
+    "documents_manifest_path": "/home/on_dev/onjourney/cers-index-batch/CI_BATCH/storage/manifests/2026-03-18/run_discover_documents_20260318T071908Z_8c30c4c0_documents.jsonl",
+    "extraction_runs_path": "/home/on_dev/onjourney/cers-index-batch/CI_BATCH/storage/manifests/2026-03-18/run_extract_pages_20260318T071916Z_ec6333c3_extraction_runs.jsonl",
+    "extracted_documents_path": "/home/on_dev/onjourney/cers-index-batch/CI_BATCH/storage/manifests/2026-03-18/run_extract_pages_20260318T071916Z_ec6333c3_documents_extracted.jsonl",
+    "requested_documents": 1,
+    "succeeded_documents": 1,
+    "failed_documents": 0,
+    "page_count": 116,
+    "evidence_count": 115
+  }
+}

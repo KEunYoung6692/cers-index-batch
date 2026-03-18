@@ -1,0 +1,12 @@
+{
+  "batch_name": "discover_documents",
+  "run_id": "run_discover_documents_20260318T071908Z_8c30c4c0",
+  "run_date": "2026-03-18",
+  "started_at": "2026-03-18T07:19:08Z",
+  "ci_batch_root": "/home/on_dev/onjourney/cers-index-batch/CI_BATCH",
+  "extra": {
+    "input_dir": "/home/on_dev/onjourney/cers-index-batch/CI_BATCH/docs/samples/reports",
+    "document_count": 6,
+    "documents_manifest_path": "/home/on_dev/onjourney/cers-index-batch/CI_BATCH/storage/manifests/2026-03-18/run_discover_documents_20260318T071908Z_8c30c4c0_documents.jsonl"
+  }
+}

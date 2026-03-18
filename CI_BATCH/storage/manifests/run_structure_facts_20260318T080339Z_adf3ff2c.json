@@ -1,0 +1,17 @@
+{
+  "batch_name": "structure_facts",
+  "run_id": "run_structure_facts_20260318T080339Z_adf3ff2c",
+  "run_date": "2026-03-18",
+  "started_at": "2026-03-18T08:03:39Z",
+  "ci_batch_root": "/home/on_dev/onjourney/cers-index-batch/CI_BATCH",
+  "extra": {
+    "documents_manifest_path": "/home/on_dev/onjourney/cers-index-batch/CI_BATCH/storage/manifests/2026-03-18/run_extract_pages_20260318T071916Z_ec6333c3_documents_extracted.jsonl",
+    "chunks_manifest_path": "/home/on_dev/onjourney/cers-index-batch/CI_BATCH/storage/manifests/2026-03-18/run_build_chunks_20260318T072212Z_6e9355a4_retrieval_chunks.jsonl",
+    "structured_manifest_path": "/home/on_dev/onjourney/cers-index-batch/CI_BATCH/storage/manifests/2026-03-18/run_structure_facts_20260318T080339Z_adf3ff2c_structured_facts.jsonl",
+    "dry_run": true,
+    "requested_documents": 1,
+    "processed_documents": 1,
+    "structured_record_count": 0,
+    "table_count": 10
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "batch_name": "materialize_loads",
+  "run_id": "run_materialize_loads_20260318T091655Z_105f754c",
+  "run_date": "2026-03-18",
+  "started_at": "2026-03-18T09:16:55Z",
+  "ci_batch_root": "/home/on_dev/onjourney/cers-index-batch/CI_BATCH",
+  "extra": {
+    "structured_manifest_path": "/home/on_dev/onjourney/cers-index-batch/CI_BATCH/storage/manifests/2026-03-18/run_structure_facts_20260318T090911Z_02ea3906_structured_facts.jsonl",
+    "materialized_manifest_path": "/home/on_dev/onjourney/cers-index-batch/CI_BATCH/storage/manifests/2026-03-18/run_materialize_loads_20260318T091655Z_105f754c_load_rows.jsonl",
+    "summary_manifest_path": "/home/on_dev/onjourney/cers-index-batch/CI_BATCH/storage/manifests/2026-03-18/run_materialize_loads_20260318T091655Z_105f754c_load_summary.json",
+    "status_filter": null,
+    "structured_record_count": 2,
+    "materialized_record_count": 2,
+    "ready_count": 0,
+    "needs_resolution_count": 2,
+    "invalid_count": 0,
+    "table_count": 1
+  }
+}

@@ -1,0 +1,4 @@
+"""
+PDF extraction stage.
+"""
+
